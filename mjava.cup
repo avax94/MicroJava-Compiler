@@ -1,0 +1,307 @@
+import java_cup.runtime.*;
+
+action code {:
+    int globalVar = 0;
+    int localVar = 0;
+    int globalConst = 0;
+    int globalArrays = 0;
+    int classDef = 0;
+    int classMethodDef = 0;
+    int statementBlock = 0;
+    int mainFuncCalls = 0;
+    int formalArguments = 0;
+    int classFields;
+
+    boolean isArray;
+    int arrays = 0, vars = 0, consts = 0, methods = 0;;
+    boolean insideClass = false;
+    boolean insideMethod = false;
+    boolean global = true;
+    boolean insideMain = false;
+
+private void print(String s) { System.out.println(s); System.out.flush(); }
+
+public void printResult() {
+            print("Pronadjeno: " + globalVar + " globalnih promenljivih");
+            print("Pronadjeno: " + globalConst + " globalnih konstanti");
+            print("Pronadjeno: " + globalArrays + " globalnih nizova");
+            print("Pronadjeno: " + localVar + " lokalnih promenljivih");
+            print("Pronadjeno: " + classDef + " definicija klasa");
+            print("Pronadjeno: " + classMethodDef + " metoda");
+            print("Pronadjeno: " + statementBlock + " statement blokova");
+            print("Pronadjeno: " + mainFuncCalls + " poziva funkcija u mainu");
+            print("Pronadjeno: " + formalArguments + " formalnih argumenata");
+            print("Pronadjeno: " + classFields + " polja klasa");
+}
+
+:}
+
+
+parser code {:
+    boolean _main = true;
+    int depth = 0;
+
+    public int error_sync_size() { return 1; }
+    public static void main(String args[]) throws Exception {
+        java.io.FileReader r = new java.io.FileReader(args[0]);
+        Lexer skener = new Lexer(r);
+        parser p = new parser(skener);
+        Symbol s = p.parse();  //pocetak parsiranja
+    }
+
+    /***********************************************************************
+    * slede redefinisani metodi za prijavu gresaka radi izmene teksta poruke
+    ***********************************************************************/
+    public void report_fatal_error(String message, Object   info) throws java.lang.Exception {
+      done_parsing();
+//      report_error(message, info);
+    }
+
+    public void syntax_error(Symbol cur_token) {
+        report_error("\nSintaksna greska", cur_token);
+    }
+
+    public void unrecovered_syntax_error(Symbol cur_token) throws java.lang.Exception {
+        report_fatal_error("Fatalna greska, parsiranje se ne moze nastaviti", cur_token);
+    }
+
+  public void report_error(String message, Object info)
+    {
+      System.err.print(message);
+      System.err.flush();
+      if (info instanceof Symbol)
+          System.err.println(" na liniji " + (((Symbol)info).right + 1) + " gresna na: " + ((Symbol)info).value.toString());
+      else System.err.println("");
+    }
+
+:}
+
+
+
+terminal IDENT, CONSTANT, COMMENT;
+
+terminal MULOPLEFT, MULOPRIGHT, MINUS, PLUS, ADDOPRIGHT;
+terminal RELOP, ASSIGN, SCOLIN, DOT;
+terminal DPLUS, DMINUS, AND, OR, COLIN;
+terminal LBR, RBR, LSBR, RSBR, LCBR, RCBR;
+
+terminal CONST, CLASS, EXTENDS, STATIC, VOID, IF, ELSE, FOR, BREAK;
+terminal CONTINUE, RETURN, PRINT, READ, PROGRAM, NEW, ERROR;
+
+non terminal Program, Declarations, DeclRepeat, ConstDecl, ConstDef, ConstDefRepeat, VarDeclClassTerminal;
+non terminal VarDeclGlobal, VarOpt, VarOptGlobalRepeat, VarDeclGlobalRepeat,VarDeclLocalWithError, VarDeclClassRepeatOpt, SbrOpt, ClassDecl, Extends;
+non terminal VarDeclLocal, VarDeclClassRepeat, VarOptLocalRepeat, VarDeclLocalRepeat;
+non terminal MethodImplError, MethodImplOpt, MethodDecl, MethodDeclRepeat, FormParsWithError, Parameter, ParameterColinError, ParameterRbrError, ParameterRepeat;
+non terminal Type, ExtType, Statement, StatementRepeat, ElsStmt, ConstOpt, DesignatorStatement, DesignatorStatementErr;
+non terminal DesignatorStmtOptions, DesignatorStatementOpt, ActPars, ActualParameter, ActParamRepeat;
+non terminal ConditionWithError, ConditionOpt, CondTerm, CondTermOr, CondTermRep, CondFact, CondFactAnd, CondFactRepeat;
+non terminal RelopExp, MinusOpt, Expr, ExprOpt, ExprOrError, Term, TermExpr, TermRep, Factor, OptParameters;
+non terminal NewParameters, TermFactor, FactorRep, Designator, DesignatorParam, DesignatorParamRep;
+non terminal Assignop, Addop, AddopLeft, Mulop, StaticOpt, Condition, VarDeclLocalScolinError, VarDeclLocalLcbrError, VarDeclLocalRepeatOpt, VarDeclLocalRepeatOptWOutLcbr;
+non terminal AssignWithError, StartVarOpt, EndVarOpt, ActParsWithError;
+precedence left ELSE;
+
+Program ::= PROGRAM {: global = true; :}
+  IDENT DeclRepeat LCBR {: global = false; :} MethodDeclRepeat RCBR {: printResult(); :};
+Declarations ::= ConstDecl | VarDeclGlobal | ClassDecl;
+
+DeclRepeat ::= |
+               Declarations DeclRepeat;
+
+ConstDecl ::= CONST Type IDENT ASSIGN CONSTANT ConstDefRepeat SCOLIN {: print("ConstDecl state found"); if(global) globalConst++; :};
+ConstDef  ::=  COLIN IDENT ASSIGN CONSTANT;
+ConstDefRepeat ::= |
+                   ConstDef ConstDefRepeat {: if(global) globalConst++; :} ;
+
+//Proveri sta radis ovde mozda ne moze ovako
+VarDeclGlobal ::= Type VarOptGlobalRepeat {: if(global && !insideClass && !insideMain) {
+                                                                    if(isArray)
+                                                                      globalArrays++;
+                                                                    else
+                                                                      globalVar++;
+                                                                 } else if(insideClass && !insideMethod) {
+                                                                   classFields++;
+                                                                 }
+                                                                 print("Global var found!");
+                                                               :};
+VarOpt  ::= IDENT:i SbrOpt;
+
+StartVarOpt ::= VarOpt COLIN  |
+                error COLIN {:print("StartVar error"); :};
+EndVarOpt ::= VarOpt SCOLIN |
+              error SCOLIN {:print("EndVar error"); :};
+
+VarOptGlobalRepeat ::= StartVarOpt  VarOptGlobalRepeat {: if(!insideClass && !insideMain) {
+                                                                     if(isArray)
+                                                                       globalArrays++;
+                                                                     else
+                                                                       globalVar++;
+                                                                  } else if(insideClass && !insideMethod) {
+                                                                       classFields++;
+                                                                  }
+                                                              :}
+                      | EndVarOpt;
+
+VarDeclLocal ::= Type VarOptLocalRepeat       {:
+                                                    print("Local var found!");
+                                               :};
+
+VarOptLocalRepeat ::= VarOpt  {: if(insideMain) {
+                                     localVar++;
+                                 }
+                              :} COLIN  VarOptLocalRepeat
+                    | VarOpt {: if(insideMain) {
+                                   localVar++;
+                                }
+                             :};
+VarDeclLocalScolinError ::= VarDeclLocal SCOLIN
+                          | error SCOLIN {: print("1"); :};
+VarDeclLocalLcbrError ::= VarDeclLocal SCOLIN LCBR
+                          | error LCBR {: print("3"); :};
+VarDeclLocalRepeat ::= VarDeclLocalScolinError {: print("SCOLIN ERROR"); :} VarDeclLocalRepeat
+                     | VarDeclLocalLcbrError {: print("LCBR ERROR"); :};
+//TODO: Error can have wrong terminal for example "}"
+VarDeclLocalWithError ::= VarDeclLocal
+                        | error;
+VarDeclClassRepeat ::= VarDeclLocalWithError SCOLIN
+                     | VarDeclLocalWithError SCOLIN VarDeclClassRepeat;
+VarDeclClassRepeatOpt ::= |
+                          VarDeclClassRepeat;
+VarDeclLocalRepeatOpt ::= LCBR
+                        | VarDeclLocalRepeat;
+VarDeclLocalRepeatOptWOutLcbr ::= |
+                                  VarDeclLocalRepeat;
+SbrOpt  ::=  {: isArray = false; :}
+          |  LSBR RSBR {: isArray = true; :};
+//TODO: VarDeclLocal should go up to LCBR but not sure LCBR will be there!
+ClassDecl ::= CLASS {:
+                        insideClass = true;
+                        classDef++;
+                        print("Found class!");
+                    :} IDENT Extends LCBR VarDeclClassRepeatOpt MethodImplOpt RCBR {: print("ClassDecl state found!"); insideClass = false; :}; //TODO: rethink
+
+Extends ::=
+            | EXTENDS Type
+            | error;
+
+//We dont need LCBR here since we included it in VarDeclClassRepeat
+MethodImplOpt ::= |
+                  LCBR MethodDeclRepeat RCBR;
+StaticOpt ::= |
+              STATIC;
+MethodDecl ::=  StaticOpt ExtType {: print("ExtType"); :} IDENT:name {: if(name.toString().equals("main"))
+                                                  insideMain = true;
+
+                                                if(insideClass)
+                                                  classMethodDef++;
+
+                                                insideMethod = true;
+
+                                                print(name.toString());
+                                             :} FormParsWithError {: print("FormParsWithError"); :} VarDeclLocalRepeatOpt StatementRepeat RCBR {: if(insideMain)
+                                                                                                                  insideMain = false;
+                                                                                                                 insideMethod = false;
+                                                                                                                  print("MethodDecl found!");:};
+
+MethodDeclRepeat ::= |
+                     MethodDecl MethodDeclRepeat;
+FormParsWithError ::= LBR  RBR
+                    | ParameterRepeat;
+Parameter ::= Type IDENT SbrOpt;
+ParameterColinError ::= Parameter COLIN
+                      | error COLIN {: print("PColin error"); :};
+ParameterRbrError ::= Parameter RBR
+                      | error RBR {: print("RBR error"); :};
+ParameterRepeat ::= ParameterRbrError
+                    | ParameterColinError ParameterRepeat;
+
+Type ::= IDENT {: print("Type state found"); :};
+
+ExtType ::= Type | VOID;
+
+Statement ::= DesignatorStatement SCOLIN {: print("Statement.DS state found"); :}
+            | IF LBR ConditionWithError RBR Statement ElsStmt {: print("Statement.IFELSE state found"); :}
+            | FOR LBR DesignatorStatementOpt SCOLIN ConditionOpt SCOLIN DesignatorStatementOpt RBR Statement SCOLIN {: print("Statement.FOR state found"); :} //not sure if SCOLIN needed here
+            | BREAK SCOLIN {: print("Statement.BREAK state found"); :}
+            | CONTINUE SCOLIN {: print("Statement.CONTINUE state found"); :}
+            | RETURN ExprOpt SCOLIN {: print("Statement.RETURN state found"); :}
+            | READ LBR Designator RBR SCOLIN {: print("READ"); if(insideMain) mainFuncCalls++; :}
+            | PRINT LBR Expr ConstOpt RBR SCOLIN  {: if(insideMain) mainFuncCalls++; :}
+            | LCBR StatementRepeat RCBR {: print("StatementRepeat state found"); statementBlock++; :};
+StatementRepeat ::= |
+                    Statement StatementRepeat;
+ElsStmt ::= |
+            ELSE Statement;
+ConstOpt ::= |
+             COLIN CONSTANT;
+
+
+DesignatorStatement ::= Designator DesignatorStmtOptions {: print("DesignatorStatement state found"); :};
+AssignWithError ::= Assignop Expr {: print("AssignOp Expr"); :}
+                  | error {: print("Match this!"); :} ;
+
+//Think about this!
+DesignatorStmtOptions ::=  AssignWithError
+                          | LBR ActParsWithError RBR {: print("***********IM HERE MADAFAKA!*********"); if(insideMain) mainFuncCalls++; :}
+                          | DPLUS | DMINUS;
+DesignatorStatementOpt ::= |
+                           DesignatorStatementErr;
+DesignatorStatementErr ::= DesignatorStatement
+                         | error {: print("MATCHED!") ;:};
+ActPars ::= |
+            Expr ActParamRepeat {: print("ActPars state found"); :};
+ActParsWithError ::= ActPars
+                   | error;
+ActualParameter ::= COLIN Expr;
+ActParamRepeat ::= |
+                  ActualParameter ActParamRepeat;
+Condition ::= CondTerm CondTermRep {: print("Condition state found"); :};
+
+ConditionOpt ::= |
+                 ConditionWithError;
+ConditionWithError ::= Condition
+                 | error {: print("ConditionWithError error matched!"); :}";
+CondTerm ::= CondFact CondFactRepeat {: print("CondFact state found"); :};
+CondTermOr ::= OR CondTerm;
+CondTermRep ::= |
+                CondTermOr CondTermRep;
+
+CondFact ::= Expr RelopExp {: print("CondFact state found"); :};
+CondFactAnd ::= AND CondFact;
+CondFactRepeat ::= |
+                   CondFactAnd CondFactRepeat;
+RelopExp ::= |
+             RELOP Expr;
+
+MinusOpt ::= | MINUS;
+Expr ::= MinusOpt Term TermRep {: print("Expr state found"); :};
+ExprOpt ::= |
+            Expr;
+ExprOrError ::= Expr | error;
+
+Term ::= Factor FactorRep {: print("Term state found"); :};
+TermExpr ::= Addop Term;
+TermRep ::= |
+            TermExpr TermRep;
+Factor ::= Designator OptParameters {: print("Factor.MethodCall state found"); :}
+         | CONSTANT {: print("Factor.CONST state found"); :}
+         | NEW Type NewParameters {: print("Factor.new state found"); :}
+         | LBR Expr RBR {: print("Factor.BREXPR state found"); :};
+OptParameters ::= |
+                  LBR ActPars RBR  {: if(insideMain) mainFuncCalls++; :};
+NewParameters ::= |
+                  LSBR Expr RSBR;
+TermFactor ::= Mulop Factor;
+FactorRep ::= |
+              TermFactor FactorRep;
+
+Designator ::= IDENT:i DesignatorParamRep {: print("Designator state found" + i); :};
+DesignatorParam ::= DOT IDENT | LSBR ExprOrError RSBR;
+DesignatorParamRep ::=
+                       | DesignatorParam DesignatorParamRep;
+
+Assignop ::= ASSIGN | ADDOPRIGHT | MULOPRIGHT {: print("Assignop state found"); :};
+Addop ::= AddopLeft | ADDOPRIGHT {: print("Addop state found"); :};
+AddopLeft ::= PLUS | MINUS;
+Mulop ::= MULOPLEFT | MULOPRIGHT {: print("Mulop state found"); :};
+

@@ -1,0 +1,11 @@
+program Program
+class Milan  extends Avax a {
+ int x; int x, y;
+}
+
+{
+void main ()  {
+  for(x = 2 ;  i < 3 ; I++  )
+    x[2](x+2, 3);;
+}
+}
