@@ -1,6 +1,13 @@
 import java_cup.runtime.*;
+import rs.etf.pp1.symboltable.concepts.*;
+import rs.etf.pp1.symboltable.*;
+init with {:
+  Tab.init();
+:}
 
 action code {:
+    Struct varTypeHelper;
+
     int globalVar = 0;
     int localVar = 0;
     int globalConst = 0;
@@ -18,6 +25,22 @@ action code {:
     boolean insideMethod = false;
     boolean global = true;
     boolean insideMain = false;
+
+
+private Obj insertSymbol(int kind, String name, Struct type) {
+  int numSym = Tab.currentScope().values().size();
+  Obj result = Tab.insert(kind, name, type);
+  int numSymAfter = Tab.currentScope().values().size();
+
+  if(numSym != numSymAfter) {
+    print("Definisan simbol: " + name);
+  }
+  else {
+    parser.report_error("Redefinisan simbol: " + name + " u tabeli simbola", null);
+  }
+
+  return result;
+}
 
 private void print(String s) { System.out.println(s); System.out.flush(); }
 
@@ -86,80 +109,109 @@ terminal DPLUS, DMINUS, AND, OR, COLIN;
 terminal LBR, RBR, LSBR, RSBR, LCBR, RCBR;
 
 terminal CONST, CLASS, EXTENDS, STATIC, VOID, IF, ELSE, FOR, BREAK;
-terminal CONTINUE, RETURN, PRINT, READ, PROGRAM, NEW, ERROR;
+terminal CONTINUE, RETURN, PRINT, READ, PROGRAM, NEW;
 
-non terminal Program, Declarations, DeclRepeat, ConstDecl, ConstDef, ConstDefRepeat, VarDeclClassTerminal;
-non terminal VarDeclGlobal, VarOpt, VarOptGlobalRepeat, VarDeclGlobalRepeat,VarDeclLocalWithError, VarDeclClassRepeatOpt, SbrOpt, ClassDecl, Extends;
+non terminal Program, ProgName, Declarations, DeclRepeat, ConstDecl, ConstDef, ConstDefRepeat;
+non terminal VarDeclGlobal, VarOpt, VarOptGlobalRepeat,VarDeclLocalWithError, VarDeclClassRepeatOpt, ClassDecl, Extends;
 non terminal VarDeclLocal, VarDeclClassRepeat, VarOptLocalRepeat, VarDeclLocalRepeat;
-non terminal MethodImplError, MethodImplOpt, MethodDecl, MethodDeclRepeat, FormParsWithError, Parameter, ParameterColinError, ParameterRbrError, ParameterRepeat;
-non terminal Type, ExtType, Statement, StatementRepeat, ElsStmt, ConstOpt, DesignatorStatement, DesignatorStatementErr;
+non terminal MethodImplOpt, MethodDecl, MethodDeclRepeat, FormParsWithError, Parameter, ParameterColinError, ParameterRbrError, ParameterRepeat;
+non terminal Statement, StatementRepeat, ElsStmt, ConstOpt, DesignatorStatement, DesignatorStatementErr;
 non terminal DesignatorStmtOptions, DesignatorStatementOpt, ActPars, ActualParameter, ActParamRepeat;
 non terminal ConditionWithError, ConditionOpt, CondTerm, CondTermOr, CondTermRep, CondFact, CondFactAnd, CondFactRepeat;
 non terminal RelopExp, MinusOpt, Expr, ExprOpt, ExprOrError, Term, TermExpr, TermRep, Factor, OptParameters;
 non terminal NewParameters, TermFactor, FactorRep, Designator, DesignatorParam, DesignatorParamRep;
-non terminal Assignop, Addop, AddopLeft, Mulop, StaticOpt, Condition, VarDeclLocalScolinError, VarDeclLocalLcbrError, VarDeclLocalRepeatOpt, VarDeclLocalRepeatOptWOutLcbr;
+non terminal Assignop, Addop, AddopLeft, Mulop, StaticOpt, Condition, VarDeclLocalScolinError, VarDeclLocalLcbrError, VarDeclLocalRepeatOpt;
 non terminal AssignWithError, StartVarOpt, EndVarOpt, ActParsWithError;
+
+non terminal Struct Type, ExtType, ClassType;
+non terminal Boolean SbrOpt;
+non terminal Obj ClassVar;
 precedence left ELSE;
 
 Program ::= PROGRAM {: global = true; :}
-  IDENT DeclRepeat LCBR {: global = false; :} MethodDeclRepeat RCBR {: printResult(); :};
-Declarations ::= ConstDecl | VarDeclGlobal | ClassDecl;
+            ProgName DeclRepeat LCBR {: global = false; :}
+            MethodDeclRepeat RCBR {: printResult(); :};
+ProgName ::= IDENT:progName
+             {:
+                insertSymbol(Obj.Prog, progName.toString(), Tab.noType);
+             :};
 
-DeclRepeat ::= |
+Declarations ::= ConstDecl | VarDeclGlobal | ClassDecl;
+DeclRepeat ::= /* epsilon */
+              |
                Declarations DeclRepeat;
 
-ConstDecl ::= CONST Type IDENT ASSIGN CONSTANT ConstDefRepeat SCOLIN {: print("ConstDecl state found"); if(global) globalConst++; :};
-ConstDef  ::=  COLIN IDENT ASSIGN CONSTANT;
-ConstDefRepeat ::= |
-                   ConstDef ConstDefRepeat {: if(global) globalConst++; :} ;
+ConstDecl ::= CONST Type:type {: varTypeHelper = type; :}
+              ConstDefRepeat SCOLIN {: print("ConstDecl state found"); :};
+ConstDef  ::=  IDENT:varName
+               {:
+                 varTypeHelper = varTypeHelper;
+                 insertSymbol(Obj.Con, varName.toString(), varTypeHelper);
+               :}
+               ASSIGN CONSTANT;
+ConstDefRepeat ::= ConstDef {: if(global) globalConst++; :}
+                  |
+                   ConstDef COLIN ConstDefRepeat {: if(global) globalConst++; :} ;
 
 //Proveri sta radis ovde mozda ne moze ovako
-VarDeclGlobal ::= Type VarOptGlobalRepeat {: if(global && !insideClass && !insideMain) {
-                                                                    if(isArray)
-                                                                      globalArrays++;
-                                                                    else
-                                                                      globalVar++;
-                                                                 } else if(insideClass && !insideMethod) {
-                                                                   classFields++;
-                                                                 }
-                                                                 print("Global var found!");
-                                                               :};
-VarOpt  ::= IDENT:i SbrOpt;
+VarDeclGlobal ::= Type:varType {: varTypeHelper = varType; :}
+                  VarOptGlobalRepeat
+                  {: if(global && !insideClass && !insideMain) {
+                    if(isArray)
+                      globalArrays++;
+                    else
+                      globalVar++;
+                    } else if(insideClass && !insideMethod) {
+                      classFields++;
+                    }
+                      print("Global var found!");
+                  :};
+VarOpt  ::= IDENT:varName SbrOpt:array
+            {:
+               insertSymbol(insideClass ? Obj.Fld : Obj.Var, varName.toString(), array ? new Struct(Struct.Array, varTypeHelper) : varTypeHelper);
+            :};
 
 StartVarOpt ::= VarOpt COLIN  |
                 error COLIN {:print("StartVar error"); :};
 EndVarOpt ::= VarOpt SCOLIN |
               error SCOLIN {:print("EndVar error"); :};
 
-VarOptGlobalRepeat ::= StartVarOpt  VarOptGlobalRepeat {: if(!insideClass && !insideMain) {
-                                                                     if(isArray)
-                                                                       globalArrays++;
-                                                                     else
+VarOptGlobalRepeat ::= StartVarOpt VarOptGlobalRepeat {: if(!insideClass && !insideMain) {
+                                                           if(isArray)
+                                                             globalArrays++;
+                                                           else
                                                                        globalVar++;
                                                                   } else if(insideClass && !insideMethod) {
                                                                        classFields++;
                                                                   }
-                                                              :}
+                                                      :}
                       | EndVarOpt;
 
-VarDeclLocal ::= Type VarOptLocalRepeat       {:
-                                                    print("Local var found!");
-                                               :};
-
-VarOptLocalRepeat ::= VarOpt  {: if(insideMain) {
-                                     localVar++;
-                                 }
-                              :} COLIN  VarOptLocalRepeat
-                    | VarOpt {: if(insideMain) {
-                                   localVar++;
-                                }
-                             :};
+VarDeclLocal ::= Type:varType {: varTypeHelper = varType; :}
+                 VarOptLocalRepeat {:
+                                     print("Local var found!");
+                                   :};
+VarOptLocalRepeat ::= VarOpt
+                     {: if(insideMain) {
+                          localVar++;
+                        }
+                     :}
+                      COLIN  VarOptLocalRepeat
+                    |
+                      VarOpt
+                     {: if(insideMain) {
+                          localVar++;
+                        }
+                     :};
 VarDeclLocalScolinError ::= VarDeclLocal SCOLIN
-                          | error SCOLIN {: print("1"); :};
+                          |
+                            error SCOLIN;
 VarDeclLocalLcbrError ::= VarDeclLocal SCOLIN LCBR
-                          | error LCBR {: print("3"); :};
-VarDeclLocalRepeat ::= VarDeclLocalScolinError {: print("SCOLIN ERROR"); :} VarDeclLocalRepeat
-                     | VarDeclLocalLcbrError {: print("LCBR ERROR"); :};
+                        |
+                          error LCBR;
+VarDeclLocalRepeat ::= VarDeclLocalScolinError VarDeclLocalRepeat
+                     |
+                       VarDeclLocalLcbrError;
 //TODO: Error can have wrong terminal for example "}"
 VarDeclLocalWithError ::= VarDeclLocal
                         | error;
@@ -169,36 +221,49 @@ VarDeclClassRepeatOpt ::= |
                           VarDeclClassRepeat;
 VarDeclLocalRepeatOpt ::= LCBR
                         | VarDeclLocalRepeat;
-VarDeclLocalRepeatOptWOutLcbr ::= |
-                                  VarDeclLocalRepeat;
-SbrOpt  ::=  {: isArray = false; :}
-          |  LSBR RSBR {: isArray = true; :};
+SbrOpt  ::=  {: RESULT = isArray = false; :}
+          |  LSBR RSBR {: RESULT = isArray = true; :};
 //TODO: VarDeclLocal should go up to LCBR but not sure LCBR will be there!
-ClassDecl ::= CLASS {:
-                        insideClass = true;
-                        classDef++;
-                        print("Found class!");
-                    :} IDENT Extends LCBR VarDeclClassRepeatOpt MethodImplOpt RCBR {: print("ClassDecl state found!"); insideClass = false; :}; //TODO: rethink
-
+ClassDecl ::= ClassType:classType ClassVar Extends LCBR VarDeclClassRepeatOpt MethodImplOpt RCBR
+              {:
+                Tab.chainLocalSymbols((Struct)classType);
+                Tab.closeScope();
+                print("ClassDecl state found!"); insideClass = false;
+              :}; //TODO: rethink
+ClassType ::= CLASS:classType
+              {: RESULT = new Struct(Struct.Class);
+                 varTypeHelper = RESULT;
+                 insideClass = true;
+                 classDef++;
+                 print("Found class!");
+              :};
+ClassVar ::= IDENT:className
+             {:
+                RESULT = insertSymbol(Obj.Type, className.toString(), varTypeHelper);
+                Tab.openScope();
+             :};
 Extends ::=
-            | EXTENDS Type
-            | error;
-
-//We dont need LCBR here since we included it in VarDeclClassRepeat
+           |
+            EXTENDS Type
+           |
+            error;
 MethodImplOpt ::= |
                   LCBR MethodDeclRepeat RCBR;
 StaticOpt ::= |
               STATIC;
-MethodDecl ::=  StaticOpt ExtType {: print("ExtType"); :} IDENT:name {: if(name.toString().equals("main"))
-                                                  insideMain = true;
+MethodDecl ::=  StaticOpt ExtType:retType IDENT:name
+                {: if(name.toString().equals("main"))
+                     insideMain = true;
 
-                                                if(insideClass)
-                                                  classMethodDef++;
+                   if(insideClass)
+                     classMethodDef++;
 
-                                                insideMethod = true;
+                   insideMethod = true;
+                   print(name.toString());
 
-                                                print(name.toString());
-                                             :} FormParsWithError {: print("FormParsWithError"); :} VarDeclLocalRepeatOpt StatementRepeat RCBR {: if(insideMain)
+                   Obj methodObj = insertSymbol(Obj.Meth, name.toString(), retType);
+                :}
+                FormParsWithError {: print("FormParsWithError"); :} VarDeclLocalRepeatOpt StatementRepeat RCBR {: if(insideMain)
                                                                                                                   insideMain = false;
                                                                                                                  insideMethod = false;
                                                                                                                   print("MethodDecl found!");:};
@@ -206,8 +271,11 @@ MethodDecl ::=  StaticOpt ExtType {: print("ExtType"); :} IDENT:name {: if(name.
 MethodDeclRepeat ::= |
                      MethodDecl MethodDeclRepeat;
 FormParsWithError ::= LBR  RBR
-                    | ParameterRepeat;
-Parameter ::= Type IDENT SbrOpt;
+                    | LBR ParameterRepeat;
+Parameter ::= Type:type IDENT:varName SbrOpt:array
+              {:
+                insertSymbol(Obj.Var, varName.toString(), array ? new Struct(Struct.Array, type) : type);
+              :};
 ParameterColinError ::= Parameter COLIN
                       | error COLIN {: print("PColin error"); :};
 ParameterRbrError ::= Parameter RBR
@@ -215,9 +283,27 @@ ParameterRbrError ::= Parameter RBR
 ParameterRepeat ::= ParameterRbrError
                     | ParameterColinError ParameterRepeat;
 
-Type ::= IDENT {: print("Type state found"); :};
+Type ::= IDENT:typeName
+{:
+    Obj typeNode = Tab.find(typeName.toString());
+   	if (typeNode == Tab.noObj) {
+   		parser.report_error("Nije pronadjen tip " + typeName + " u tabeli simbola", null);
+   		RESULT = Tab.noType;
+   	}
+   	else {
+   		if (Obj.Type == typeNode.getKind()) {
+   			RESULT = typeNode.getType();
+   		}
+   		else {
+   			parser.report_error("Greska na liniji" + typeNameleft+ ": Ime " + typeName + " ne predstavlja tip ", null);
+   			RESULT = Tab.noType;
+   		}
+   	}
+:};
 
-ExtType ::= Type | VOID;
+ExtType ::= Type:type {: RESULT = type; :}
+           |
+            VOID {: RESULT = Tab.noType; :};
 
 Statement ::= DesignatorStatement SCOLIN {: print("Statement.DS state found"); :}
             | IF LBR ConditionWithError RBR Statement ElsStmt {: print("Statement.IFELSE state found"); :}
@@ -260,7 +346,7 @@ Condition ::= CondTerm CondTermRep {: print("Condition state found"); :};
 ConditionOpt ::= |
                  ConditionWithError;
 ConditionWithError ::= Condition
-                 | error {: print("ConditionWithError error matched!"); :}";
+                 | error {: print("ConditionWithError error matched!"); :};
 CondTerm ::= CondFact CondFactRepeat {: print("CondFact state found"); :};
 CondTermOr ::= OR CondTerm;
 CondTermRep ::= |

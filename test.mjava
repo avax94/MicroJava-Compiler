@@ -1,10 +1,6 @@
 program Program
-class Milan  extends Avax a {
- int x; int x, y;
-}
-
 {
-void main ()  {
+void main (int x, int y) int z, p; char q, r;  {
   for(x = 2 ;  i < 3 ; I++  )
     x[2](x+2, 3);;
 }
