@@ -119,7 +119,7 @@ non terminal VarDeclGlobal, VarOpt, VarOptGlobalRepeat,VarDeclLocalWithError, Va
 non terminal VarDeclLocal, VarDeclClassRepeat, VarOptLocalRepeat, VarDeclLocalRepeat;
 non terminal MethodImplOpt, MethodDecl, MethodDeclRepeat, FormParsWithError, Parameter, ParameterColinError, ParameterRbrError, ParameterRepeat;
 non terminal Statement, StatementRepeat, ElsStmt, ConstOpt, DesignatorStatement, DesignatorStatementErr;
-non terminal DesignatorStmtOptions, DesignatorStatementOpt, ActPars, ActualParameter, ActParamRepeat;
+non terminal DesignatorStmtOptions, DesignatorStatementOpt, ActPars, ActParsHelper, ActualParameter, ActParamRepeat;
 non terminal ConditionWithError, ConditionOpt, CondTerm, CondTermOr, CondTermRep, CondFact, CondFactAnd, CondFactRepeat;
 non terminal RelopExp, MinusOpt, ExprOrError, OptParameters;
 non terminal NewParameters, DesignatorParam, DesignatorParamRep;
@@ -458,10 +458,14 @@ DesignatorStatementOpt ::= |
                            DesignatorStatementErr;
 DesignatorStatementErr ::= DesignatorStatement
                          | error {: print("MATCHED!") ;:};
-ActPars ::= |
-            Expr ActParamRepeat {: print("ActPars state found"); :};
+ActParsHelper ::= Expr
+                |
+                  ActPars COLIN Expr {: print("ActPars state found"); :};
 ActParsWithError ::= ActPars
                    | error;
+ActPars ::= /* epsilon */
+          |
+            ActParsHelper;
 ActualParameter ::= COLIN Expr;
 ActParamRepeat ::= |
                   ActualParameter ActParamRepeat;
