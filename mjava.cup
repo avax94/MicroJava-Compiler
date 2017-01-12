@@ -14,6 +14,8 @@ init with {:
 action code {:
     Struct varTypeHelper;
     Obj methodObjHelper;
+    Stack<Integer> rArgCounters = new Stack<Integer>();
+    Stack<Obj> methodCalls = new Stack<Obj>();
     Obj methodObj;
     Obj classObj;
     Struct extendsType;
@@ -40,6 +42,11 @@ action code {:
     boolean hasReturn = false;
     int forLoopLevel = 0;
 
+private void incrementArgs() {
+  int x = rArgCounters.pop();
+  x++;
+  rArgCounters.push(x);
+}
 
 private boolean checkStatic(Obj o) {
   if(o != null && o.getKind() == Obj.Meth) {
@@ -98,9 +105,9 @@ private Obj findObj(Obj obj, String name) {
 }
 
 private Struct getArgument(int fpos) {
-  print("FPOS: " + fpos + " " +  methodObjHelper.getName() + " " +methodObjHelper.getLevel());
+  print("FPOS: " + fpos + " " +  methodCalls.peek().getName() + " " +methodCalls.peek().getLevel());
 
-  return methodObjHelper.getLocalSymbols().stream().filter(o -> o.getFpPos() == fpos).collect(Collectors.toList()).get(0).getType();
+  return methodCalls.peek().getLocalSymbols().stream().filter(o -> o.getFpPos() == fpos).collect(Collectors.toList()).get(0).getType();
 }
 
 private Obj searchClass(Struct cl, String name) {
@@ -553,8 +560,15 @@ DesignatorStatement ::= Designator:des AssignWithError:res
                           }
 
                           rArgCount = checkStatic(methodObjHelper) ? 0 : 1;
+                          rArgCounters.push(rArgCount);
+                          print("PUSHING " + methodObjHelper.getName());
+                          methodCalls.push(methodObjHelper);
                         :}
                         LBR ActParsWithError RBR
+                        {:
+                          rArgCounters.pop();
+                          print("POPING " + methodCalls.peek().getName()); methodCalls.pop();
+                        :}
                       |
                         Designator:des DesignatorStmtOptions
                         {:
@@ -578,29 +592,39 @@ DesignatorStatementErr ::= DesignatorStatement
                          | error {: print("MATCHED!") ;:};
 ActParsHelper ::= Expr:e
                   {:
-                    if(methodObjHelper.getName() != "error" && e.getType() != getArgument(rArgCount)) {
-                      parser.report_error("Pogresan tip " + (rArgCount + 1) + ". argumenta!", null);
+                    methodObjHelper = methodCalls.peek();
+
+                    if(methodObjHelper.getName() != "error" &&
+                       methodObjHelper.getLevel() > rArgCounters.peek() &&
+                       e.getType() != getArgument(rArgCounters.peek())) {
+                      parser.report_error("Pogresan tip " + (rArgCounters.peek() + 1) + ". argumenta!", null);
                     }
 
-                    rArgCount++;
+                    incrementArgs();
                   :}
                 |
                   ActParsHelper COLIN Expr:e
-                {:
-                  if(methodObjHelper.getName() != "error" && e.getType() != getArgument(rArgCount)) {
-                    parser.report_error("Pogresan tip " + (rArgCount + 1) + ". argumenta!", null);
-                  }
+                  {:
+                    methodObjHelper = methodCalls.peek();
 
-                  rArgCount++;
+                    if(methodObjHelper.getName() != "error" &&
+                       methodObjHelper.getLevel() > rArgCounters.peek() &&
+                       e.getType() != getArgument(rArgCounters.peek())) {
+                      parser.report_error("Pogresan tip " + (rArgCounters.peek() + 1) + ". argumenta!", null);
+                    }
 
-                  print("ActPars state found");
-                :};
+                    incrementArgs();
+
+                    print("ActPars state found");
+                  :};
 ActParsWithError ::= ActPars
                      {:
-                        if(methodObjHelper.getName() != "error") {
-                          if(rArgCount != methodObjHelper.getLevel()) {
+                        methodObjHelper = methodCalls.peek();
 
-                            parser.report_error("Pogresan broj argumenata! " + rArgCount + " " + methodObjHelper.getLevel() + methodObjHelper.getName(), null);
+                        if(methodObjHelper.getName() != "error") {
+                          if(rArgCounters.peek() != methodObjHelper.getLevel()) {
+
+                            parser.report_error("Pogresan broj argumenata! " + rArgCounters.peek() + " " + methodObjHelper.getLevel() + methodObjHelper.getName(), null);
                           }
                         }
                      :}
@@ -679,10 +703,13 @@ Term ::= Factor:factor {: RESULT = factor; :}
 
 Factor ::= Designator:des
            {:
-             rArgCount = des.getKind() != Obj.Meth ? rArgCount :
-                         (checkStatic(methodObjHelper) ? 0 : 1);
+             print("PUSHING " + des.getName());
+             methodCalls.push(des);
+             int argCnt = (checkStatic(methodCalls.peek()) ? 0 : 1);
+             rArgCounters.push(argCnt);
            :}
-           OptParameters {: RESULT = des; print("Factor.MethodCall state found " + des.getName()); :}
+           OptParameters {:                          rArgCounters.pop();
+print("POPING " + methodCalls.peek().getName()); methodCalls.pop(); RESULT = des; print("Factor.MethodCall state found " + des.getName()); :}
          |
            Constant:c {: RESULT = new Obj(Obj.Var, "", c); print("Factor.CONST state found"); :}
          |
