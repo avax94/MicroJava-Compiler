@@ -1,9 +1,13 @@
+import java.io.File;
+import java.io.FileOutputStream;
+import rs.etf.pp1.mj.runtime.*;
 import java.util.stream.Collectors;
 import java.util.*;
 import java_cup.runtime.*;
 import rs.etf.pp1.symboltable.structure.*;
 import rs.etf.pp1.symboltable.concepts.*;
 import rs.etf.pp1.symboltable.*;
+
 init with {:
   Tab.init();
   boolType = new Struct(Struct.Bool);
@@ -48,6 +52,30 @@ private void incrementArgs() {
   rArgCounters.push(x);
 }
 
+private int getOperand(String s) {
+  switch(s) {
+    case "+": return Code.add;
+    case "-": return Code.sub;
+    case "*": return Code.mul;
+    case "/": return Code.div;
+    case "%": return Code.rem;
+    case "++": return Code.add;
+    case "--": return Code.sub;
+  }
+
+  return -1;
+}
+
+private boolean opType(String s) {
+  switch(s) {
+    case "+": case "-": case "/": case "*": case "%":
+      return false;
+    case "*=": case "/=": case "%=": case "+=": case "-=":
+      return true;
+  }
+
+  return false;
+}
 private boolean checkStatic(Obj o) {
   if(o != null && o.getKind() == Obj.Meth) {
     if(methodObj != o)
@@ -160,13 +188,21 @@ parser code {:
     Obj boolObj;
     boolean _main = true;
     int depth = 0;
-
+    boolean errorDetected = false;
     public int error_sync_size() { return 1; }
     public static void main(String args[]) throws Exception {
         java.io.FileReader r = new java.io.FileReader(args[0]);
         Lexer skener = new Lexer(r);
         parser p = new parser(skener);
         Symbol s = p.parse();  //pocetak parsiranja
+
+        if(!p.errorDetected) {
+          File objFile = new File("test/program.obj");
+          if(objFile.exists())
+            objFile.delete();
+          Code.write(new FileOutputStream(objFile));
+          System.out.println("************************USPESNO ZAVRSENO PARSIRANJE!*************************");
+        }
     }
 
     /***********************************************************************
@@ -187,6 +223,7 @@ parser code {:
 
   public void report_error(String message, Object info)
     {
+      errorDetected = true;
       System.err.print(message);
       System.err.flush();
       if (info instanceof Symbol)
@@ -212,24 +249,31 @@ non terminal Program, ProgName, Declarations, DeclRepeat, ConstDecl, ConstDef, C
 non terminal VarDeclGlobal, VarOpt, VarOptGlobalRepeat,VarDeclLocalWithError, VarDeclClassRepeatOpt, Extends;
 non terminal VarDeclLocal, VarDeclClassRepeat, VarOptLocalRepeat, VarDeclLocalRepeat;
 non terminal MethodImplOpt, MethodDecl, MethodDeclRepeat, FormParsWithError, Parameter, ParameterColinError, ParameterRbrError, ParameterRepeat;
-non terminal Statement, StatementRepeat, ElsStmt, ConstOpt, DesignatorStatement, DesignatorStatementErr;
+non terminal Statement, StatementRepeat, ElsStmt, DesignatorStatement, DesignatorStatementErr;
 non terminal DesignatorStmtOptions, DesignatorStatementOpt, ActPars, ActParsHelper, ActualParameter, ActParamRepeat;
 non terminal ConditionWithError, ConditionOpt, CondTerm, CondTermOr, CondTermRep, CondFact, CondFactAnd, CondFactRepeat;
 non terminal RelopExp, MinusOpt, ExprOrError, OptParameters;
 non terminal NewParameters, DesignatorParam, DesignatorParamRep;
 non terminal Assignop, AddopLeft, Condition, VarDeclLocalScolinError, VarDeclLocalLcbrError, VarDeclLocalRepeatOpt;
-non terminal StartVarOpt, EndVarOpt, ActParsWithError;
+non terminal StartVarOpt, EndVarOpt, ActParsWithError, Addop, Mulop;
 
-non terminal Struct Type, ExtType, ClassType, Constant, ClassDecl;
-non terminal Boolean SbrOpt, StaticOpt, Addop, Mulop;
-non terminal Obj ClassVar, Designator;
+non terminal java.lang.Integer ConstOpt;
+non terminal Struct Type, ExtType, ClassType, ClassDecl;
+non terminal Boolean SbrOpt, StaticOpt;
+non terminal Obj ClassVar, Designator, Constant;
 non terminal Obj Expr, Factor, Term, AssignWithError, ExprOpt;
 
 precedence left ELSE;
 //Think about chaining local symbols to program!
-Program ::= PROGRAM {: global = true; :}
+Program ::= PROGRAM {: Tab.openScope();global = true; :}
             ProgName DeclRepeat LCBR {: global = false; :}
-            MethodDeclRepeat RCBR {: Tab.dump(); Tab.closeScope();  printResult(); :};
+            MethodDeclRepeat RCBR
+            {:
+              Tab.dump();
+              Code.dataSize = Tab.currentScope().getnVars();
+              Tab.closeScope();
+              printResult();
+            :};
 ProgName ::= IDENT:progName
              {:
                 insertSymbol(Obj.Prog, progName.toString(), Tab.noType);
@@ -240,7 +284,23 @@ DeclRepeat ::= /* epsilon */
               |
                Declarations DeclRepeat;
 
-Constant ::= NUMCONST {: RESULT = Tab.intType; :} | BOOLCONST {: RESULT = parser.boolType; :} | CHARCONST {: RESULT = Tab.charType; :};
+Constant ::= NUMCONST:match
+             {:
+               RESULT = new Obj(Obj.Con, "", Tab.intType);
+               RESULT.setAdr(Integer.parseInt(match.toString()));
+             :}
+           | BOOLCONST:match
+             {:
+               RESULT = new Obj(Obj.Con, "", parser.boolType);
+               RESULT.setAdr(match == "true" ? 1 : 0);
+             :}
+           |
+             CHARCONST:match
+             {:
+               RESULT = new Obj(Obj.Con, "", Tab.charType);
+               print("HEJ NASAO SAM " + match.toString().charAt(1));
+               RESULT.setAdr(match.toString().charAt(1));
+             :};
 ConstDecl ::= CONST Type:type {: varTypeHelper = type; :}
               ConstDefRepeat SCOLIN {: print("ConstDecl state found"); :};
 ConstDef  ::=  IDENT:varName
@@ -248,9 +308,9 @@ ConstDef  ::=  IDENT:varName
                  varTypeHelper = varTypeHelper;
                  insertSymbol(Obj.Con, varName.toString(), varTypeHelper);
                :}
-               ASSIGN Constant:assignType
+               ASSIGN Constant:cn
                {:
-                  if(assignType.getKind() != varTypeHelper.getKind()) {
+                  if(cn.getType().getKind() != varTypeHelper.getKind()) {
                      parser.report_error("Tip konstante i konstanta se ne poklapaju!", null);
                   }
                :};
@@ -273,7 +333,8 @@ VarDeclGlobal ::= Type:varType {: varTypeHelper = varType; :}
                   :};
 VarOpt  ::= IDENT:varName SbrOpt:array
             {:
-               insertSymbol(insideClass && !insideMethod ? Obj.Fld : Obj.Var, varName.toString(), array ? new Struct(Struct.Array, varTypeHelper) : varTypeHelper);
+               Obj o = insertSymbol(insideClass && !insideMethod ? Obj.Fld : Obj.Var, varName.toString(), array ? new Struct(Struct.Array, varTypeHelper) : varTypeHelper);
+               print("UBACIO SIMBOL: " + o.getName() + " levela: " + o.getLevel());
             :};
 
 StartVarOpt ::= VarOpt COLIN  |
@@ -387,8 +448,10 @@ MethodDecl ::=  StaticOpt:isStatic ExtType:retType IDENT:name
                      parser.report_error("Globalne metode ne mogu biti staticke!", null);
                    }
 
-                   if(name.toString().equals("main"))
+                   if(name.toString().equals("main")) {
                      insideMain = true;
+                     Code.mainPc = Code.pc;
+                   }
 
                    if(insideClass)
                      classMethodDef++;
@@ -436,9 +499,11 @@ Parameter ::= Type:type IDENT:varName SbrOpt:array
                 argCount++;
               :};
 ParameterColinError ::= Parameter COLIN
-                      | error COLIN;
+                      |
+                        error COLIN;
 ParameterRbrError ::= Parameter RBR
-                      | error RBR;
+                    |
+                      error RBR;
 ParameterRepeat ::= ParameterRbrError
                     | ParameterColinError ParameterRepeat;
 
@@ -486,6 +551,7 @@ Statement ::= DesignatorStatement SCOLIN {: print("Statement.DS state found"); :
             |
               RETURN ExprOpt:e SCOLIN
               {:
+                Code.put(Code.return_);
                 hasReturn = true; print("Statement.RETURN state found");
 
                 if(!insideMethod) {
@@ -513,10 +579,17 @@ Statement ::= DesignatorStatement SCOLIN {: print("Statement.DS state found"); :
                    parser.report_error("Ne moze se pozvati READ za ovaj tip simbola!", null);
                  }
 
+                if(des.getType() == Tab.intType) {
+                  Code.put(Code.read);
+                } else {
+                  Code.put(Code.bread);
+                }
+
+                Code.store(des);
                 print("READ"); if(insideMain) mainFuncCalls++;
               :}
             |
-              PRINT LBR Expr:e ConstOpt RBR SCOLIN
+              PRINT LBR Expr:e ConstOpt:c RBR SCOLIN
               {:
                 if(e.getType() != Tab.intType &&
                    e.getType() != Tab.charType &&
@@ -525,6 +598,14 @@ Statement ::= DesignatorStatement SCOLIN {: print("Statement.DS state found"); :
                  }
 
                 if(insideMain) mainFuncCalls++;
+
+                if(e.getType() == Tab.intType) {
+                  Code.loadConst(c == null ? 5 : c);
+                  Code.put(Code.print);
+                } else if (e.getType() == Tab.charType) {
+                  Code.loadConst(c == null ? 1 : c);
+                  Code.put(Code.bprint);
+                }
               :}
             |
               LCBR StatementRepeat RCBR {: print("StatementRepeat state found"); statementBlock++; :};
@@ -532,9 +613,9 @@ StatementRepeat ::= |
                     Statement StatementRepeat;
 ElsStmt ::= |
             ELSE Statement;
-ConstOpt ::= /* epsilon */
+ConstOpt ::= /* epsilon */ {: RESULT = null; :}
            |
-             COLIN NUMCONST;
+             COLIN NUMCONST:n {: RESULT = java.lang.Integer.parseInt(n.toString()); :};
 
 
 DesignatorStatement ::= Designator:des AssignWithError:res
@@ -545,9 +626,14 @@ DesignatorStatement ::= Designator:des AssignWithError:res
                                parser.report_error("Ne moze se dodeliti vrednost ovom simbolu!", null);
                           }
 
+
+                          print("TIP REZULTATA " + des.getName() + " " + res.getType() + " " + des.getType() + " " + des.getType().compatibleWith(res.getType()));
+
                           if(des != Tab.noObj && !des.getType().compatibleWith(res.getType())) {
                             parser.report_error("Izraz je pogresnog tipa!", null);
                           }
+
+                          Code.store(des);
                         :}
                       |
                         Designator:des
@@ -570,7 +656,7 @@ DesignatorStatement ::= Designator:des AssignWithError:res
                           print("POPING " + methodCalls.peek().getName()); methodCalls.pop();
                         :}
                       |
-                        Designator:des DesignatorStmtOptions
+                        Designator:des DesignatorStmtOptions:op
                         {:
                           if(des.getKind() != Obj.Var &&
                              des.getKind() != Obj.Fld &&
@@ -581,11 +667,16 @@ DesignatorStatement ::= Designator:des AssignWithError:res
                           if(des.getType() != Tab.intType) {
                             parser.report_error("Operacija se moze izvesti samo na tipu: int!", null);
                           }
+
+                          Code.load(des);
+                          Code.loadConst(1);
+                          Code.put(getOperand(op.toString()));
+                          Code.store(des);
                         :};
 AssignWithError ::= Assignop Expr:expr {: RESULT = expr; print("AssignOp Expr"); :};
 
 //Think about this!
-DesignatorStmtOptions ::=  DPLUS | DMINUS;
+DesignatorStmtOptions ::=  DPLUS:d {: RESULT = d; :} | DMINUS:d {: RESULT = d; :};
 DesignatorStatementOpt ::= |
                            DesignatorStatementErr;
 DesignatorStatementErr ::= DesignatorStatement
@@ -654,10 +745,15 @@ CondFactRepeat ::= |
 RelopExp ::= |
              RELOP Expr;
 
-MinusOpt ::= | MINUS;
-Expr ::= MinusOpt Term:t {: RESULT = t; :}
+MinusOpt ::= /* epsilon */
+           |
+             MINUS {: Code.put(Code.neg); :};
+Expr ::= MinusOpt Term:t
+         {:
+           RESULT = t;
+         :}
        |
-         Expr:e Addop:b Term:t
+         Expr:e Addop:op Term:t
         {:
           if(e.getType() != Tab.intType || t.getType() != Tab.intType) {
             parser.report_error("Terms must be of type int!", null);
@@ -667,12 +763,24 @@ Expr ::= MinusOpt Term:t {: RESULT = t; :}
             parser.report_error("Nekopatibilni tipovi!", null);
           }
 
-         if(b &&
-            e.getKind() != Obj.Var &&
-            e.getKind() != Obj.Fld &&
-            e.getKind() != Obj.Elem) {
-            parser.report_error("Ovaj simbol ne moze ici sa ovim operandom!", null);
-         }
+         boolean b = opType(op.toString());
+         print("OPERAND JE: " + op.toString());
+         int operand = getOperand("" + op.toString().charAt(0));
+
+         if(b) {
+            if(e.getKind() != Obj.Var &&
+               e.getKind() != Obj.Fld &&
+               e.getKind() != Obj.Elem) {
+              parser.report_error("Ovaj simbol ne moze ici sa ovim operandom!", null);
+            } else {
+              Code.load(e);
+              Code.put(operand);
+              Code.store(e);
+              Code.load(e);
+            }
+          } else {
+            Code.put(operand);
+          }
 
           RESULT = new Obj(Obj.Var, "", e.getType());;
           print("Expr state found");
@@ -684,17 +792,28 @@ ExprOrError ::= Expr | error;
 
 Term ::= Factor:factor {: RESULT = factor; :}
        |
-         Term:t Mulop:b Factor:f
+         Term:t Mulop:op Factor:f
          {:
            if(t.getType() != Tab.intType || f.getType() != Tab.intType) {
              parser.report_error("Los tip!", null);
            }
 
-           if(b &&
-              t.getKind() != Obj.Var &&
-              t.getKind() != Obj.Fld &&
-              t.getKind() != Obj.Elem) {
-               parser.report_error("Ovaj simbol ne moze ici sa ovim operandom!", null);
+           boolean b = opType(op.toString());
+           int operand = getOperand("" + op.toString().charAt(0));
+
+           if(b) {
+              if(t.getKind() != Obj.Var &&
+                 t.getKind() != Obj.Fld &&
+                 t.getKind() != Obj.Elem) {
+                parser.report_error("Ovaj simbol ne moze ici sa ovim operandom!", null);
+               } else {
+                 Code.put(operand);
+                 Code.store(t);
+                 //TODO: rethink this
+                 Code.load(t);
+               }
+            } else {
+              Code.put(operand);
             }
 
            RESULT = new Obj(Obj.Var, "", t.getType());
@@ -703,18 +822,29 @@ Term ::= Factor:factor {: RESULT = factor; :}
 
 Factor ::= Designator:des
            {:
-             print("PUSHING " + des.getName());
              methodCalls.push(des);
              int argCnt = (checkStatic(methodCalls.peek()) ? 0 : 1);
              rArgCounters.push(argCnt);
+             if(des.getKind() != Obj.Meth) {
+               print("TIP: " + des.getKind());
+               Code.load(des);
+
+             } else {
+                //TODO: finish this for method calls
+             }
            :}
-           OptParameters {:                          rArgCounters.pop();
-print("POPING " + methodCalls.peek().getName()); methodCalls.pop(); RESULT = des; print("Factor.MethodCall state found " + des.getName()); :}
+           OptParameters
+           {:                          rArgCounters.pop();
+             methodCalls.pop();
+             RESULT = des;
+             print("Factor.MethodCall state found " + des.getName());
+           :}
          |
-           Constant:c {: RESULT = new Obj(Obj.Var, "", c); print("Factor.CONST state found"); :}
+           Constant:c {: Code.load(c); RESULT = c; print("Factor.CONST state found"); :}
          |
            NEW Type:type NewParameters:nparam
            {:
+             //TODO noidea!
              if(nparam != Tab.intType && nparam != Tab.noType) {
                parser.report_error("Parametri operanda new moraju biti tipa int!", null);
              }
@@ -726,7 +856,9 @@ print("POPING " + methodCalls.peek().getName()); methodCalls.pop(); RESULT = des
              print("Factor.new state found");
            :}
          |
-           LBR Expr:e RBR {: RESULT = e; print("Factor.BREXPR state found"); :};
+           LBR Expr:e RBR {: RESULT = e; print("Factor.BREXPR state found"); :}
+         |
+           Designator LBR Expr;
 OptParameters ::= /* epsilon */
                 |
                   LBR ActParsWithError RBR  {: if(insideMain) mainFuncCalls++; :};
@@ -744,19 +876,24 @@ Designator ::= Designator:des DOT IDENT:ident
                     RESULT = findObj(des, ident.toString());
                     if(RESULT == Tab.noObj) {
                       parser.report_error("Nepostojece polje/metoda " + ident.toString() +  " za varijablu " + des.getName(), null);
-                      RESULT = Tab.noObj;
                     }
+
+                    if(des.getType().getKind() != Obj.Type)
+                      Code.load(des);
                   }
                :}
              |
-               Designator:des LSBR ExprOrError RSBR
+               Designator:des LSBR
                {:
                   if(des.getType().getKind() != Struct.Array) {
                     parser.report_error("Promenljiva" + des.getName() +  " nije tipa niz!", null);
+                  } else {
+                    Code.load(des);
                   }
 
-                  RESULT = new Obj(Obj.Elem, des.getName(), des.getType().getElemType());
+                  RESULT = new Obj(Obj.Elem, "", des.getType().getElemType());
                :}
+               ExprOrError RSBR
              |
                IDENT:ident
                {:
@@ -783,8 +920,8 @@ DesignatorParamRep ::=
                        | DesignatorParam DesignatorParamRep;
 
 Assignop ::= ASSIGN | ADDOPRIGHT | MULOPRIGHT {: print("Assignop state found"); :};
-Addop ::= AddopLeft {: RESULT = false; :} | ADDOPRIGHT {: RESULT = true; print("Addop state found"); :};
-AddopLeft ::= PLUS | MINUS;
-Mulop ::= MULOPLEFT {: RESULT = false; :} | MULOPRIGHT {: RESULT = true; print("Mulop state found"); :};
+Addop ::= AddopLeft:al {: RESULT = al.toString(); :} | ADDOPRIGHT:ar {: RESULT = ar.toString(); print("Addop state found"); :};
+AddopLeft ::= PLUS:p {: RESULT = p; :} | MINUS:m {: RESULT = m; :};
+Mulop ::= MULOPLEFT:a {: RESULT = a.toString(); :}
 
-
+RightOperands ::= ADDOPRIGHT:a {: RESULT = a.toString(); | MULOPRIGHT:b {: result = b.toString() :};
