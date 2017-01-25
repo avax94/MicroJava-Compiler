@@ -57,7 +57,8 @@ action code {:
     boolean hasReturn = false;
     int forLoopLevel = 0;
 
-private Obj generateCodeForSuperClass(Obj class1) {
+private void generateCodeForSuperClass(Obj class1) {
+  String name = "$super";
   Obj o = class1.getType().getKind() == Struct.Class ?
           (class1.getKind() == Obj.Type ?
            class1.getType().getMembersTable().searchKey(name) :
