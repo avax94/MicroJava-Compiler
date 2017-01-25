@@ -57,6 +57,38 @@ action code {:
     boolean hasReturn = false;
     int forLoopLevel = 0;
 
+private Obj generateCodeForSuperClass(Obj class1) {
+  Obj o = class1.getType().getKind() == Struct.Class ?
+          (class1.getKind() == Obj.Type ?
+           class1.getType().getMembersTable().searchKey(name) :
+           class1.getType().getElemType().getMembersTable().searchKey(name)) :
+          Tab.noObj;
+}
+
+private Obj getClassField(Obj class1, String name) {
+  Obj o = class1.getType().getKind() == Struct.Class ?
+          (class1.getKind() == Obj.Type ?
+           class1.getType().getMembersTable().searchKey(name) :
+           class1.getType().getElemType().getMembersTable().searchKey(name)) :
+          Tab.noObj;
+
+  //todo: check if you need to swtich $super to main because it looks strange here
+  if(o == null)
+    o = Tab.find("$super");
+
+  if(o == null)
+    o = Tab.noObj;
+  return o;
+}
+
+private boolean compatability(Obj class1, Struct type) {
+   return class1 != Tab.noObj &&
+          (class1.getType().compatibleWith(type) ||
+           (class1.getType().getKind() == Struct.Class &&
+            (class1.getType().getElemType().compatibleWith(type) ||
+             compatability(getClassField(class1, "$super"), type))));
+}
+
 private void incrementArgs() {
   int x = rArgCounters.pop();
   x++;
@@ -75,6 +107,21 @@ private int getRelOperator(String s) {
   }
 
   return -1;
+}
+
+private void allocateComplexObject(Obj class1) {
+  Obj superClass = getClassField(class1, "$super");
+  int numOfFields = class1.getType().getElemType() == null ?
+                    class1.getType().getNumberOfFields() :
+                    class1.getType().getElemType().getNumberOfFields();
+  Code.put(Code.new_);
+  Code.put2(numOfFields*4);
+
+  if(superClass != Tab.noObj) {
+    allocateComplexObject(superClass);
+    Code.put(Code.dup);
+    Code.store(superClass);
+  }
 }
 
 private int getOperand(String s) {
@@ -111,6 +158,12 @@ private boolean checkStatic(Obj o) {
 
   return false;
 }
+
+
+
+//private List<Obj> getFieldsWithType(Obj obj, int kind) {
+//}
+
 //TODO: finish this
 private boolean validInheritance(Obj method) {
   if(!insideClass)
@@ -123,38 +176,52 @@ private boolean validInheritance(Obj method) {
   } else {
     return false;
   }
+}
+
+void printSymbols() {
+   Tab.currentScope().values().stream().forEach(x-> print(x.getName()));
+}
+private void initVTable(Obj obj) {
 
 
 }
-
 private Obj findObj(Obj obj, String name) {
   //if we are in method and method is static we search for obj differently
-
+  Obj result = Tab.noObj;
+  print("ObjectName is: " + obj.getName());
   if(obj != null && obj.getType().getKind() == Struct.Class) {
      if(insideClass &&
-        obj.getType().getElemType() == classObj.getType()) { //if var.method and we are inside class
-       print("SHOULD BE HERE BUT AM NOT " + name);
-       return Tab.find(name);
+       obj.getType().getElemType() == classT) { //if var.ident and we are inside class of type var
+       print("##1." + Tab.currentScope().values().size());
+       result = Tab.currentScope().getOuter().findSymbol(name);
+       if(result == null)
+        print("WADAFAK");
+       result = result == null ? Tab.noObj : result;
      } else if (obj.getKind() == Obj.Type) { //if Class.Method
-       Obj result;
+       print("##2.");
        if(insideClass && obj  == classObj) {
          result = Tab.find(name);
        } else {
          result = obj.getType().getMembersTable().searchKey(name);
        }
 
-       return checkStatic(result) ? result : Tab.noObj;
-     }
-     else {
-       print("SHOULD'nt BE HERE BUT I AM NOT " + name);
+       result = checkStatic(result) ? result : Tab.noObj;
+     } else {
+       print("##3.");
        SymbolDataStructure table = obj.getType().getElemType().getMembersTable();
-       Obj result = table.searchKey(name);
+       result = table.searchKey(name);
+       result = result == null ? Tab.noObj : result;
+     }
 
-       return result == null ? Tab.noObj : result;
+     if(result == Tab.noObj) { //if we didn't find key, we are looking at SUPER class recursivly
+       print("HERE I AM! HURRICANEE!!!" + name);
+       Obj sClass = getClassField(obj, "$super");
+       if(sClass != Tab.noObj)
+         result = findObj(sClass, name);
      }
   }
 
-  return Tab.noObj;
+  return result;
 }
 
 private Struct getArgument(int fpos) {
@@ -178,10 +245,13 @@ private Obj insertSymbol(int kind, String name, Struct type) {
   }
 
   Obj result = Tab.insert(kind, name, type);
+
   int numSymAfter = Tab.currentScope().values().size();
+
 
   if(numSym != numSymAfter) {
     print("Definisan simbol: " + name);
+    result.getType().getElemType();
   }
   else {
     parser.report_error("Redefinisan simbol: " + name + " u tabeli simbola", null);
@@ -271,20 +341,20 @@ terminal CONST, CLASS, EXTENDS, STATIC, VOID, IF, ELSE, FOR, BREAK;
 terminal CONTINUE, RETURN, PRINT, READ, PROGRAM, NEW;
 
 non terminal Program, ProgName, Declarations, DeclRepeat, ConstDecl, ConstDef, ConstDefRepeat;
-non terminal VarDeclGlobal, VarOpt, VarOptGlobalRepeat,VarDeclLocalWithError, VarDeclClassRepeatOpt, Extends;
+non terminal VarDeclGlobal, VarOpt, VarOptGlobalRepeat,VarDeclLocalWithError, VarDeclClassRepeatOpt;
 non terminal VarDeclLocal, VarDeclClassRepeat, VarOptLocalRepeat, VarDeclLocalRepeat;
 non terminal MethodImplOpt, MethodDecl, MethodDeclRepeat, FormParsWithError, Parameter, ParameterColinError, ParameterRbrError, ParameterRepeat;
 non terminal Statement, StatementRepeat, ElsStmt, DesignatorStatement, DesignatorStatementErr;
 non terminal DesignatorStmtOptions, DesignatorStatementOpt, ActPars, ActParsHelper, ActualParameter, ActParamRepeat;
 non terminal ConditionWithError, ConditionOpt, CondTerm, CondTermOr, CondFact, CondFactAnd;
-non terminal RelopExp, MinusOpt, ExprOrError, OptParameters;
+non terminal RelopExp, ExprOrError, OptParameters;
 non terminal DesignatorParam, DesignatorParamRep;
 non terminal Assignop, AddopLeft, Condition, VarDeclLocalScolinError, VarDeclLocalLcbrError, VarDeclLocalRepeatOpt;
 non terminal StartVarOpt, EndVarOpt, ActParsWithError, Addop, Mulop, RightOperands;
 
 non terminal java.lang.Integer ConstOpt;
-non terminal Struct NewParameters, Type, ExtType, ClassType, ClassDecl;
-non terminal Boolean SbrOpt, StaticOpt;
+non terminal Struct NewParameters, Type, ExtType, ClassType, ClassDecl, Extends;
+non terminal Boolean SbrOpt, StaticOpt, MinusOpt;
 non terminal Obj ClassVar, Designator, Constant;
 non terminal Obj Expr, Factor, Term, AssignWithError, ExprOpt;
 non terminal Integer CondFactRepeat, CondTermRep;
@@ -416,12 +486,19 @@ VarDeclLocalRepeatOpt ::= LCBR
 SbrOpt  ::=  {: RESULT = isArray = false; :}
           |  LSBR RSBR {: RESULT = isArray = true; :};
 //TODO: VarDeclLocal should go up to LCBR but not sure LCBR will be there!
-ClassDecl ::= ClassType:cT ClassVar Extends LCBR VarDeclClassRepeatOpt MethodImplOpt RCBR
+ClassDecl ::= ClassType:cT ClassVar Extends
+              {:
+                if(extendsType != Tab.noType) {
+                  print("Extending...");
+                  insertSymbol(Obj.Fld, "$super", extendsType);
+                }
+              :}
+              LCBR VarDeclClassRepeatOpt MethodImplOpt RCBR
               {:
                 Tab.chainLocalSymbols(cT);
                 Tab.closeScope();
                 print("ClassDecl state found!"); insideClass = false;
-              :}; //TODO: rethink
+              :};
 ClassType ::= CLASS:classType
               {:
                  RESULT = new Struct(Struct.Class);
@@ -432,11 +509,12 @@ ClassType ::= CLASS:classType
               :};
 ClassVar ::= IDENT:className
              {:
+                print("TIP KLASE STRING: " + classT.toString());
                 RESULT = insertSymbol(Obj.Type, className.toString(), classT);
                 classObj = RESULT;
                 Tab.openScope();
              :};
-Extends ::= /* epsilon */
+Extends ::= /* epsilon */ {: extendsType = Tab.noType; :}
           |
             EXTENDS Type:type
             {:
@@ -451,8 +529,6 @@ Extends ::= /* epsilon */
                    extendsType = type;
                  }
               }
-
-
             :}
            |
             error;
@@ -484,7 +560,6 @@ MethodDecl ::=  StaticOpt:isStatic ExtType:retType IDENT:name
 
                    insideMethod = true;
                    print(name.toString());
-
                    methodObj = insertSymbol(Obj.Meth, name.toString(), retType);
                    methodObj.setAdr(Code.pc);
                    argCount = 0;
@@ -724,7 +799,8 @@ DesignatorStatement ::= Designator:des
 
 
                           print("DES TYPE: " + des.getType().getKind() + " RES TYPE: " + res.getType().getKind());
-                          if(des != Tab.noObj && !des.getType().compatibleWith(res.getType())) {
+                          if(des != Tab.noObj &&
+                             !compatability(des, res.getType())) {
                             parser.report_error("Izraz je pogresnog tipa!", null);
                           }
 
@@ -894,11 +970,14 @@ RelopExp ::= /* epsilon */ {: RESULT = "none"; :}
            |
              RELOP:r Expr {: RESULT = r; :};
 
-MinusOpt ::= /* epsilon */
+MinusOpt ::= /* epsilon */ {: RESULT = false; :}
            |
-             MINUS {: Code.put(Code.neg); :};
-Expr ::= MinusOpt Term:t
+             MINUS {: RESULT = true; :};
+Expr ::= MinusOpt:m Term:t
          {:
+           if(m)
+             Code.put(Code.neg);
+
            RESULT = t;
          :}
        |
@@ -1000,7 +1079,8 @@ Factor ::= Designator:des
 
                RESULT = new Obj(Obj.Var, "", new Struct(Struct.Array, type));
              } else {
-               RESULT = new Obj(Obj.Var, "", type);;
+               RESULT = new Obj(Obj.Type, "", type);;
+               allocateComplexObject(RESULT);
              }
 
              print("Factor.new state found");
@@ -1045,10 +1125,16 @@ Designator ::= Designator:des DOT IDENT:ident
              |
                IDENT:ident
                {:
-                 Obj des = Tab.find(ident.toString());
+                 Obj tryClass = Tab.find("this"); //we search for this - if we are inside method and inside non static class this will be found
+
+                 if(tryClass != Tab.noObj) {
+                   Code.load(tryClass);
+                 }
+
+                 Obj des = findObj(tryClass, ident.toString()); //we prioritiez fields of class by first trying to find it there
+                 des = des == Tab.noObj ? Tab.find(ident.toString()) : des;
 
                  if(insideMethod && checkStatic(methodObj)) {//ifStatic
-                   print("WHYYY?!" + des.getName() + " " + methodObj.getName());
                    if(des.getKind() == Obj.Fld) {
                      des = Tab.noObj;
                    } else if(des.getKind() == Obj.Meth && !checkStatic(des))  {
