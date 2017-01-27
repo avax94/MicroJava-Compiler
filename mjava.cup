@@ -1,4 +1,4 @@
-//todo a[0]++ not working because u are reloading things
+v//todo a[0]++ not working because u are reloading things
 import java.io.File;
 import java.io.FileOutputStream;
 import rs.etf.pp1.mj.runtime.*;
@@ -30,11 +30,16 @@ action code {:
     Stack<Integer> forEndJump = new Stack<Integer>();
     Stack<Integer> numOfFacts = new Stack<Integer>();
     Stack<Integer> numOfTerms = new Stack<Integer>();
+    boolean isComplexObj = false;
     Obj methodObj;
     Obj classObj;
+    Obj objHelper;
     Obj desHelper;
+    Obj thisHelper;
+    bool classCall = false;
     Struct extendsType;
     Struct classT;
+    int dataSize = 0;
     int argCount = 0;
     int rArgCount = 0;
     int globalVar = 0;
@@ -57,13 +62,39 @@ action code {:
     boolean hasReturn = false;
     int forLoopLevel = 0;
 
-private void generateCodeForSuperClass(Obj class1) {
-  String name = "$super";
-  Obj o = class1.getType().getKind() == Struct.Class ?
-          (class1.getKind() == Obj.Type ?
-           class1.getType().getMembersTable().searchKey(name) :
-           class1.getType().getElemType().getMembersTable().searchKey(name)) :
-          Tab.noObj;
+private void generateCodeForSuperClass(Obj class1, String objName) {
+  Code.load(class1);
+
+  if(getClassField(class1, objName) != Tab.noObj) {
+    return;
+  }
+
+  Obj o = getClassField(class1, "$super");
+
+  if(o != Tab.noObj)
+    generateCodeForSuperClass(o, objName);
+}
+
+private void getSuperSize() {
+
+}
+private void generateCallCode(Obj method) {
+  if(!classCall) {
+    int dest = des.getAdr() - Code.pc;
+    Code.put(Code.call);
+    Code.put2(dest);
+  } else {
+    Obj vtSym = getClassField(objHelper, "$vtable");
+    Code.load(vtSym);
+    String name = method.getName();
+    Code.put(Code.invokevirtual);
+
+    for(char c : name) {
+      Code.put4(Integer.parseInt(c));
+    }
+
+    Code.put4(-1);
+  }
 }
 
 private Obj getClassField(Obj class1, String name) {
@@ -73,12 +104,12 @@ private Obj getClassField(Obj class1, String name) {
            class1.getType().getElemType().getMembersTable().searchKey(name)) :
           Tab.noObj;
 
-  //todo: check if you need to swtich $super to main because it looks strange here
-  if(o == null)
-    o = Tab.find("$super");
+  if(class1.getType().getElemType() == classT)
+    o = Tab.find(name);
 
   if(o == null)
     o = Tab.noObj;
+
   return o;
 }
 
@@ -119,8 +150,8 @@ private void allocateComplexObject(Obj class1) {
   Code.put2(numOfFields*4);
 
   if(superClass != Tab.noObj) {
+    Code.put(Code.dup); //if we are loading super class we need address of allocated object on stack
     allocateComplexObject(superClass);
-    Code.put(Code.dup);
     Code.store(superClass);
   }
 }
@@ -160,8 +191,6 @@ private boolean checkStatic(Obj o) {
   return false;
 }
 
-
-
 //private List<Obj> getFieldsWithType(Obj obj, int kind) {
 //}
 
@@ -182,6 +211,11 @@ private boolean validInheritance(Obj method) {
 void printSymbols() {
    Tab.currentScope().values().stream().forEach(x-> print(x.getName()));
 }
+
+void printClassFlds(Obj obj) {
+   print("***********************KRECEM**********************");
+   obj.getType().getElemType().getMembersTable().symbols().stream().forEach(x -> print(x.getName()));
+}
 private void initVTable(Obj obj) {
 
 
@@ -189,17 +223,13 @@ private void initVTable(Obj obj) {
 private Obj findObj(Obj obj, String name) {
   //if we are in method and method is static we search for obj differently
   Obj result = Tab.noObj;
-  print("ObjectName is: " + obj.getName());
   if(obj != null && obj.getType().getKind() == Struct.Class) {
      if(insideClass &&
        obj.getType().getElemType() == classT) { //if var.ident and we are inside class of type var
-       print("##1." + Tab.currentScope().values().size());
        result = Tab.currentScope().getOuter().findSymbol(name);
        if(result == null)
-        print("WADAFAK");
        result = result == null ? Tab.noObj : result;
      } else if (obj.getKind() == Obj.Type) { //if Class.Method
-       print("##2.");
        if(insideClass && obj  == classObj) {
          result = Tab.find(name);
        } else {
@@ -208,14 +238,12 @@ private Obj findObj(Obj obj, String name) {
 
        result = checkStatic(result) ? result : Tab.noObj;
      } else {
-       print("##3.");
        SymbolDataStructure table = obj.getType().getElemType().getMembersTable();
        result = table.searchKey(name);
        result = result == null ? Tab.noObj : result;
      }
 
      if(result == Tab.noObj) { //if we didn't find key, we are looking at SUPER class recursivly
-       print("HERE I AM! HURRICANEE!!!" + name);
        Obj sClass = getClassField(obj, "$super");
        if(sClass != Tab.noObj)
          result = findObj(sClass, name);
@@ -226,9 +254,12 @@ private Obj findObj(Obj obj, String name) {
 }
 
 private Struct getArgument(int fpos) {
-  print("FPOS: " + fpos + " " +  methodCalls.peek().getName() + " " +methodCalls.peek().getLevel());
-
-  return methodCalls.peek().getLocalSymbols().stream().filter(o -> o.getFpPos() == fpos).collect(Collectors.toList()).get(0).getType();
+  //if we are invoking Recursion local symbols are in current Scope not in scope of method
+  if(methodCalls.peek() == methodObj) {
+    return Tab.currentScope().values().stream().filter(o -> o.getFpPos() == fpos).collect(Collectors.toList()).get(0).getType();
+  } else {
+    return methodCalls.peek().getLocalSymbols().stream().filter(o -> o.getFpPos() == fpos).collect(Collectors.toList()).get(0).getType();
+  }
 }
 
 private Obj searchClass(Struct cl, String name) {
@@ -362,12 +393,22 @@ non terminal Integer CondFactRepeat, CondTermRep;
 
 precedence left ELSE;
 //Think about chaining local symbols to program!
-Program ::= PROGRAM {: Tab.openScope();global = true; :}
-            ProgName DeclRepeat LCBR {: global = false; :}
+Program ::= PROGRAM
+            {:
+              Tab.openScope();
+              VirtualTable.setParser(parser);
+              VTStorage.setParser(parser);
+              global = true;
+            :}
+            ProgName DeclRepeat LCBR
+            {:
+              dataSize = Tab.currentScope().getnVars();
+              global = false;
+            :}
             MethodDeclRepeat RCBR
             {:
               Tab.dump();
-              Code.dataSize = Tab.currentScope().getnVars();
+              Code.dataSize = dataSize;
               Tab.closeScope();
               printResult();
             :};
@@ -395,7 +436,6 @@ Constant ::= NUMCONST:match
              CHARCONST:match
              {:
                RESULT = new Obj(Obj.Con, "", Tab.charType);
-               print("HEJ NASAO SAM " + match.toString().charAt(1));
                RESULT.setAdr(match.toString().charAt(1));
              :};
 ConstDecl ::= CONST Type:type {: varTypeHelper = type; :}
@@ -431,7 +471,6 @@ VarDeclGlobal ::= Type:varType {: varTypeHelper = varType; :}
 VarOpt  ::= IDENT:varName SbrOpt:array
             {:
                Obj o = insertSymbol(insideClass && !insideMethod ? Obj.Fld : Obj.Var, varName.toString(), array ? new Struct(Struct.Array, varTypeHelper) : varTypeHelper);
-               print("UBACIO SIMBOL: " + o.getName() + " levela: " + o.getLevel());
             :};
 
 StartVarOpt ::= VarOpt COLIN  |
@@ -489,15 +528,22 @@ SbrOpt  ::=  {: RESULT = isArray = false; :}
 //TODO: VarDeclLocal should go up to LCBR but not sure LCBR will be there!
 ClassDecl ::= ClassType:cT ClassVar Extends
               {:
+                VirtualTable vt = VTStorage.insertVTClass(classObj.getType().toString());
+                vt.setAddr(dataSize);
+                insertSymbol(Obj.Fld, "$vtable", Tab.intType);
+
                 if(extendsType != Tab.noType) {
-                  print("Extending...");
                   insertSymbol(Obj.Fld, "$super", extendsType);
                 }
               :}
               LCBR VarDeclClassRepeatOpt MethodImplOpt RCBR
-              {:
+              {
+              :
                 Tab.chainLocalSymbols(cT);
                 Tab.closeScope();
+                VirtualTable vt = VTStorage.fill(classObj);
+                vt.writeToData(dataSize);
+                dataSize+=vt.getSize();
                 print("ClassDecl state found!"); insideClass = false;
               :};
 ClassType ::= CLASS:classType
@@ -510,7 +556,6 @@ ClassType ::= CLASS:classType
               :};
 ClassVar ::= IDENT:className
              {:
-                print("TIP KLASE STRING: " + classT.toString());
                 RESULT = insertSymbol(Obj.Type, className.toString(), classT);
                 classObj = RESULT;
                 Tab.openScope();
@@ -560,7 +605,6 @@ MethodDecl ::=  StaticOpt:isStatic ExtType:retType IDENT:name
                      classMethodDef++;
 
                    insideMethod = true;
-                   print(name.toString());
                    methodObj = insertSymbol(Obj.Meth, name.toString(), retType);
                    methodObj.setAdr(Code.pc);
                    argCount = 0;
@@ -702,7 +746,6 @@ Statement ::= DesignatorStatement SCOLIN {: print("Statement.DS state found"); :
                   breakJumpAddr.push(Code.pc-2);
                   int x = breakJumpNum.pop();
                   breakJumpNum.push(x+1);
-                  print("BREAK    " + breakJumpNum.peek());
                 }
                 print("Statement.BREAK state found");
               :}
@@ -721,6 +764,9 @@ Statement ::= DesignatorStatement SCOLIN {: print("Statement.DS state found"); :
               RETURN ExprOpt:e SCOLIN
               {:
                 hasReturn = true; print("Statement.RETURN state found");
+
+                Code.put(Code.exit);
+                Code.put(Code.return_);
 
                 if(!insideMethod) {
                   parser.report_error("Naredba return se sme koristiti samo uokviru funckije/metode", null);
@@ -798,8 +844,6 @@ DesignatorStatement ::= Designator:des
                                parser.report_error("Ne moze se dodeliti vrednost ovom simbolu!", null);
                           }
 
-
-                          print("DES TYPE: " + des.getType().getKind() + " RES TYPE: " + res.getType().getKind());
                           if(des != Tab.noObj &&
                              !compatability(des, res.getType())) {
                             parser.report_error("Izraz je pogresnog tipa!", null);
@@ -820,7 +864,11 @@ DesignatorStatement ::= Designator:des
 
                           rArgCount = checkStatic(methodObjHelper) ? 0 : 1;
                           rArgCounters.push(rArgCount);
-                          print("PUSHING " + methodObjHelper.getName());
+
+                          if(rArgCount == 1 && methodObjHelper.getName() != "error") {
+                            Code.load(Tab.currentScope.findSymbol("this"));
+                          }
+
                           methodCalls.push(methodObjHelper);
                         :}
                         LBR ActParsWithError RBR
@@ -832,7 +880,8 @@ DesignatorStatement ::= Designator:des
                           }
 
                           rArgCounters.pop();
-                          print("POPING " + methodCalls.peek().getName()); methodCalls.pop();
+
+                          objHelper = null;
                         :}
                       |
                         Designator:des DesignatorStmtOptions:op
@@ -846,7 +895,10 @@ DesignatorStatement ::= Designator:des
                           if(des.getType() != Tab.intType) {
                             parser.report_error("Operacija se moze izvesti samo na tipu: int!", null);
                           }
+                          if(isComplexObj)
+                            Code.put(Code.dup);
 
+                          isComplexObj = false;
                           Code.load(des);
                           Code.loadConst(1);
                           Code.put(getOperand(op.toString()));
@@ -874,7 +926,7 @@ DesignatorStmtOptions ::=  DPLUS:d {: RESULT = d; :} | DMINUS:d {: RESULT = d; :
 DesignatorStatementOpt ::= |
                            DesignatorStatementErr;
 DesignatorStatementErr ::= DesignatorStatement
-                         | error {: print("MATCHED!") ;:};
+                         | error;
 ActParsHelper ::= Expr:e
                   {:
                     methodObjHelper = methodCalls.peek();
@@ -976,9 +1028,9 @@ MinusOpt ::= /* epsilon */ {: RESULT = false; :}
              MINUS {: RESULT = true; :};
 Expr ::= MinusOpt:m Term:t
          {:
-           if(m)
+           if(m) {
              Code.put(Code.neg);
-
+           }
            RESULT = t;
          :}
        |
@@ -1041,9 +1093,21 @@ Factor ::= Designator:des
              methodCalls.push(des);
              int argCnt = (checkStatic(methodCalls.peek()) ? 0 : 1);
              rArgCounters.push(argCnt);
+
+             if(argCnt == 1 && des.getKind() == Obj.Meth) {
+               //we check if this is implicit (calling a method from inside a class)
+               if(thisHelper == null) {
+                 thisHelper = Tab.currentScope().findSymbol("this");
+               }
+
+               Code.load(thisHelper);
+             }
+
+             thisHelper = null;
            :}
            OptParameters
-           {:                          rArgCounters.pop();
+           {:
+             rArgCounters.pop();
              if(des.getKind() != Obj.Meth) {
                Code.load(des);
              } else {
@@ -1082,6 +1146,10 @@ Factor ::= Designator:des
              } else {
                RESULT = new Obj(Obj.Type, "", type);;
                allocateComplexObject(RESULT);
+               //store value to VTable
+               Code.put(Code.dup);
+
+               VTStorage.get(
              }
 
              print("Factor.new state found");
@@ -1105,10 +1173,16 @@ Designator ::= Designator:des DOT IDENT:ident
                     RESULT = findObj(des, ident.toString());
                     if(RESULT == Tab.noObj) {
                       parser.report_error("Nepostojece polje/metoda " + ident.toString() +  " za varijablu " + des.getName(), null);
+                    } else if(des.getType().getKind() != Obj.Type) {
+                      generateCodeForSuperClass(des, ident.toString());
+                      isComplexObj = true;
                     }
+                  }
 
-                    if(des.getType().getKind() != Obj.Type)
-                      Code.load(des);
+                  if(RESULT.getKind() == Obj.Meth) {
+                    thisHelper = des;
+                    classCall = true;
+                    objHelper = des;
                   }
                :}
              |
@@ -1126,14 +1200,9 @@ Designator ::= Designator:des DOT IDENT:ident
              |
                IDENT:ident
                {:
+                 Obj des = Tab.currentScope().findSymbol(ident.toString());
                  Obj tryClass = Tab.find("this"); //we search for this - if we are inside method and inside non static class this will be found
-
-                 if(tryClass != Tab.noObj) {
-                   Code.load(tryClass);
-                 }
-
-                 Obj des = findObj(tryClass, ident.toString()); //we prioritiez fields of class by first trying to find it there
-                 des = des == Tab.noObj ? Tab.find(ident.toString()) : des;
+                 des = des == null ? findObj(tryClass, ident.toString()) : des; //we prioritiez fields of class by first trying to find it there
 
                  if(insideMethod && checkStatic(methodObj)) {//ifStatic
                    if(des.getKind() == Obj.Fld) {
@@ -1143,16 +1212,20 @@ Designator ::= Designator:des DOT IDENT:ident
                    }
                  }
 
-                 if(des == Tab.noObj)
+                 if(des == Tab.noObj) {
                    parser.report_error("Ne postoji simbol " + ident.toString() + " u tabeli simbola!", null);
+                 } else {
+                     if(tryClass != Tab.noObj && des.getKind() == Obj.Fld) {
+                       generateCodeForSuperClass(tryClass, ident.toString());
+                       isComplexObj = true;
+                     } else {
+                       isComplexObj = false;
+                     }
+                 }
 
+                 classCall = false;
                  RESULT = des;
                :};
-
-//Designator ::= IDENT:i DesignatorParamRep {: print("Designator state found" + i); :};
-DesignatorParam ::= DOT IDENT | LSBR ExprOrError RSBR;
-DesignatorParamRep ::=
-                       | DesignatorParam DesignatorParamRep;
 
 Assignop ::= ASSIGN:a {: RESULT = a; :}
            |
