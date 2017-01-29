@@ -20,6 +20,9 @@ init with {:
 action code {:
     Struct varTypeHelper;
     Obj helperObj;
+    Obj helperObj2;
+    Stack<Integer> startPC = new Stack<Integer>();
+    Stack<Integer> endPC = new Stack<Integer>();
     int backAddr;
     Stack<Integer> breakJumpAddr = new Stack<Integer>();
     Stack<Integer> breakJumpNum = new Stack<Integer>();
@@ -33,6 +36,7 @@ action code {:
     Stack<Integer> forEndJump = new Stack<Integer>();
     Stack<Integer> numOfFacts = new Stack<Integer>();
     Stack<Integer> numOfTerms = new Stack<Integer>();
+    Stack<Obj> objHelpers = new Stack<Obj>();
     boolean isComplexObj = false;
     Stack<Integer> addresses = new Stack<Integer>();
     Stack<VirtualTable> vts = new Stack<VirtualTable>();
@@ -67,6 +71,7 @@ action code {:
     boolean global = true;
     boolean insideMain = false;
     boolean hasReturn = false;
+    boolean isLoaded = false;
     int forLoopLevel = 0;
 
 private int getClassSize(Obj class1) {
@@ -81,18 +86,40 @@ private int getClassSize(Obj class1) {
   return size;
 }
 
+private void loadList(Vector<Obj> objs) {
+ for(int i = 0; i < objs.size(); i++) {
+   Code.load(objs.elementAt(i));
+ }
+}
+
+private void store(Vector<Obj> objs) {
+ for(int i = 0; i < objs.size(); i++) {
+   Code.load(objs.elementAt(i));
+ }
+}
+
 private int calculateOffset(Obj class1) {
   return getClassSize(class1) - 1;
 }
 
 private void generateCallCode(Obj method) {
-  if(!classCall) {
+  Obj obj = objHelpers.pop();
+
+  if(checkStatic(method)) {
+    endPC.pop();
+    startPC.pop();
     int dest = method.getAdr() - Code.pc;
     Code.put(Code.call);
     Code.put2(dest);
   } else {
-    Obj vtSym = getClassField(objHelper, "$vtable");
-    Code.load(helperObj);
+    Obj vtSym = getClassField(obj, "$vtable");
+    int ePC = endPC.pop();
+    int sPC = startPC.pop();
+
+    while(sPC != ePC) {
+      Code.put(Code.buf[sPC++]);
+    }
+
     Code.load(vtSym);
     String name = method.getName();
     Code.put(Code.invokevirtual);
@@ -105,10 +132,12 @@ private void generateCallCode(Obj method) {
   }
 }
 
-private Obj getClassField(Obj class1, String name) {
+private Obj getClassField(Obj obj, String name) {
+  Obj class1 = obj;
+
   if(class1.getKind() == Obj.Elem && class1.getType().getKind() == Struct.Class) {
     class1 = new Obj(class1.getKind(), "", new Struct(Struct.Class, class1.getType()));
-    class1.getType().setElementType(class1.getType());
+    class1.getType().setElementType(obj.getType());
   }
   Obj o = class1.getType().getKind() == Struct.Class ?
           (class1.getKind() == Obj.Type ?
@@ -408,8 +437,8 @@ non terminal StartVarOpt, EndVarOpt, ActParsWithError, Addop, Mulop, RightOperan
 non terminal java.lang.Integer ConstOpt;
 non terminal Struct NewParameters, Type, ExtType, ClassType, ClassDecl, Extends;
 non terminal Boolean SbrOpt, StaticOpt, MinusOpt;
-non terminal Obj ClassVar, Designator, Constant;
-non terminal Obj Expr, Factor, Term, AssignWithError, ExprOpt;
+non terminal Obj ClassVar, Designator, Constant, Term, Expr, Factor;
+non terminal Obj AssignWithError, ExprOpt;
 non terminal Integer CondFactRepeat, CondTermRep;
 
 precedence left ELSE;
@@ -821,7 +850,7 @@ Statement ::= DesignatorStatement SCOLIN {: print("Statement.DS state found"); :
             |
               READ LBR Designator:des RBR SCOLIN
               {:
-
+                 startPC.pop();
                  if(des.getKind() != Obj.Var &&
                     des.getKind() != Obj.Fld &&
                     des.getKind() != Obj.Elem) {
@@ -875,6 +904,7 @@ ConstOpt ::= /* epsilon */ {: RESULT = null; :}
 
 DesignatorStatement ::= Designator:des
                         {:
+                          startPC.pop();
                           desHelper = des;
                         :}
                         AssignWithError:res
@@ -891,11 +921,11 @@ DesignatorStatement ::= Designator:des
                           }
 
                           Code.store(des);
-
                         :}
                       |
                         Designator:des
                         {:
+                          endPC.push(Code.pc);
                           if(des.getKind() != Obj.Meth) {
                             parser.report_error("Simbol nije metoda!", null);
                             methodObjHelper = new Obj(Obj.Meth, "error", Tab.noType);
@@ -905,15 +935,7 @@ DesignatorStatement ::= Designator:des
 
                           rArgCount = checkStatic(methodObjHelper) ? 0 : 1;
                           rArgCounters.push(rArgCount);
-                          if(rArgCount == 1 && methodObjHelper.getName() != "error") {
-                            if(insideClass && insideMethod && !isComplexObj) {
-                              Code.load(Tab.currentScope.findSymbol("this"));
-                            } else {
-                              Code.put(Code.dup);
-                              Code.store(helperObj);
-                            }
-                          }
-
+                          objHelpers.push(objHelper);
                           methodCalls.push(methodObjHelper);
                         :}
                         LBR ActParsWithError RBR
@@ -923,12 +945,12 @@ DesignatorStatement ::= Designator:des
                           }
 
                           rArgCounters.pop();
-
                           objHelper = null;
                         :}
                       |
                         Designator:des DesignatorStmtOptions:op
                         {:
+                          startPC.pop();
                           if(des.getKind() != Obj.Var &&
                              des.getKind() != Obj.Fld &&
                              des.getKind() != Obj.Elem) {
@@ -956,17 +978,18 @@ AssignWithError ::= Assignop:op
                        if(operand != -1) {
                          if(desHelper.getKind() == Obj.Elem) {
                            Code.put(Code.dup2);
-                         } else {
+                         } else if (desHelper.getKind() == Obj.Fld) {
                            Code.put(Code.dup);
                          }
-
-                         Code.load(desHelper);
                        }
                     :}
                     Expr:expr
                     {:
                        int operand = getOperand("" + op.toString().charAt(0));
                        if(operand != -1) {
+                         Code.store(helperObj);
+                         Code.load(desHelper);
+                         Code.load(helperObj);
                          Code.put(operand);
                        }
 
@@ -1107,9 +1130,22 @@ ExprOpt ::= /* epsilon */ {: RESULT = Tab.noObj; :}
             Expr:e {: RESULT = e; :};
 ExprOrError ::= Expr | error;
 
-Term ::= Factor:factor {: RESULT = factor; :}
+Term ::= Factor:factor
+         {:
+           RESULT = factor;
+
+           if(!isLoaded) {
+             Code.load(factor);
+           }
+         :}
        |
-         Factor:f MULOPLEFT:op Term:t
+         Factor:f
+         {:
+           if(!isLoaded) {
+             Code.load(f);
+           }
+         :}
+         MULOPLEFT:op Term:t
          {:
            if(t.getType() != Tab.intType || f.getType() != Tab.intType) {
              parser.report_error("Los tip!", null);
@@ -1124,12 +1160,17 @@ Term ::= Factor:factor {: RESULT = factor; :}
        |
           Factor:des
           {:
-            if(des.getKind() == Obj.Elem) {
-              Code.put(Code.dup2);
-            } else if(des.getKind() == Obj.Fld) {
-              Code.put(Code.dup);
+            if(!isLoaded) {
+              if(des.getKind() == Obj.Elem) {
+                Code.put(Code.dup2);
+                Code.put(Code.dup2);
+              } else if(des.getKind() == Obj.Fld) {
+                Code.put(Code.dup);
+                Code.put(Code.dup);
+              }
+            } else {
+               parser.report_error("Ovaj simbol ne moze ici sa ovim operandom bla!!", null);
             }
-            Code.load(des);
           :}
           RightOperands:op Term:t
           {:
@@ -1138,14 +1179,15 @@ Term ::= Factor:factor {: RESULT = factor; :}
              if(des.getKind() != Obj.Var &&
                 des.getKind() != Obj.Fld &&
                 des.getKind() != Obj.Elem) {
-               parser.report_error("Ovaj simbol ne moze ici sa ovim operandom!", null);
+
+               parser.report_error("Ovaj simbol ne moze ici sa ovim operandom! aha ", null);
              } else {
+               Code.store(helperObj);
+               Code.load(des);
+               Code.load(helperObj);
                Code.put(operand);
                Code.store(des);
-
-               if(des.getKind() == Obj.Elem)
-                 Code.load(arrayHelper);
-
+               Code.load(des);
              }
 
              RESULT = des;
@@ -1154,42 +1196,37 @@ Term ::= Factor:factor {: RESULT = factor; :}
 
 Factor ::= Designator:des
            {:
+             endPC.push(Code.pc);
              methodCalls.push(des);
+             objHelpers.push(objHelper);
              int argCnt = (checkStatic(methodCalls.peek()) ? 0 : 1);
              rArgCounters.push(argCnt);
-
-             if(argCnt == 1 && des.getKind() == Obj.Meth) {
-               //we check if this is implicit (calling a method from inside a class)
-               if(thisHelper == null) {
-                 thisHelper = Tab.currentScope().findSymbol("this");
-               }
-
-               Code.load(thisHelper);
-               isComplexObj = true;
-             }
-
-             if(isComplexObj && des.getKind() == Obj.Meth) {
-               Code.put(Code.dup);
-               Code.store(helperObj);
-             }
-
-             thisHelper = null;
+             RESULT = des;
            :}
            OptParameters
            {:
              rArgCounters.pop();
-             if(des.getKind() != Obj.Meth) {
-               Code.load(des);
-             } else {
+             if(des.getKind() == Obj.Meth) {
                generateCallCode(des);
+               isLoaded = true;
+             } else {
+               isLoaded = false;
+               startPC.pop();
+               endPC.pop();
+               objHelpers.pop();
              }
 
              methodCalls.pop();
-             RESULT = des;
              print("Factor.MethodCall state found " + des.getName());
            :}
          |
-           Constant:c {: Code.load(c); RESULT = c; print("Factor.CONST state found"); :}
+           Constant:c
+           {:
+             Code.load(c);
+             RESULT = c;
+             print("Factor.CONST state found");
+             isLoaded = true;
+           :}
          |
            NEW Type:type NewParameters:nparam
            {:
@@ -1223,12 +1260,15 @@ Factor ::= Designator:des
              }
 
              print("Factor.new state found");
+             isLoaded = true;
            :}
          |
-           LBR Expr:e RBR {: RESULT = e; print("Factor.BREXPR state found"); :};
+           LBR Expr:e RBR {: isLoaded = true; RESULT = e; print("Factor.BREXPR state found"); :};
+
 OptParameters ::= /* epsilon */
                 |
                   LBR ActParsWithError RBR  {: if(insideMain) mainFuncCalls++; :};
+
 NewParameters ::= /* epsilon */ {: RESULT = Tab.noType; :}
                 |
                   LSBR Expr:e RSBR {: RESULT = e.getType(); :};
@@ -1272,6 +1312,7 @@ Designator ::= Designator:des DOT IDENT:ident
              |
                IDENT:ident
                {:
+                 startPC.push(Code.pc);
                  Obj des = Tab.currentScope().findSymbol(ident.toString());
                  Obj tryClass = Tab.find("this"); //we search for this - if we are inside method and inside non static class this will be found
                  des = des == null ? findObj(tryClass, ident.toString()) : des; //we prioritiez fields of class by first trying to find it there
@@ -1291,15 +1332,24 @@ Designator ::= Designator:des DOT IDENT:ident
                  if(des == Tab.noObj) {
                    parser.report_error("Ne postoji simbol " + ident.toString() + " u tabeli simbola!", null);
                  } else {
-                     if(tryClass != Tab.noObj && des.getKind() == Obj.Fld) {
+                     if(tryClass != Tab.noObj && (des.getKind() == Obj.Fld || des.getKind() == Obj.Meth)) {
                        Code.load(tryClass);
                        isComplexObj = true;
+                       classCall = true;
                      } else {
+                       classCall = false;
                        isComplexObj = false;
                      }
                  }
 
-                 classCall = false;
+                 if(des.getKind() == Obj.Meth && isComplexObj) {
+                   objHelper = tryClass;
+                   thisHelper = tryClass;
+                 } else {
+                   objHelper = Tab.noObj;
+                   thisHelper = Tab.noObj;
+                 }
+
                  RESULT = des;
                :};
 
